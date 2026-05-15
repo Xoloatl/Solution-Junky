@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, type KeyboardEvent } from "react";
-import { Send, Square, Bot, User, Mic, MicOff, Volume2, VolumeX, Globe } from "lucide-react";
+import { Send, Square, Bot, User, Mic, MicOff, Volume2, VolumeX, Globe, Volume, Network, Settings } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { ModelSelector } from "@/components/ModelSelector";
@@ -90,7 +90,7 @@ export function ChatPane() {
     setMessages, setMessagesLoaded, appendMessage, updateStreamingMessage,
     finalizeMessage, upsertChat, chats, citations, setCitations,
     setActiveCitationMessageId, setPendingSuggestion, settings,
-    setWebCitations,
+    setGraphOpen, setSettingsPanelOpen, setWebCitations,
   } = useAppStore();
 
   const [webSearchActive, setWebSearchActive] = useState(settings.web_search_enabled);
@@ -98,7 +98,11 @@ export function ChatPane() {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [autoSpeakEnabled, setAutoSpeakEnabled] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const sentenceBufferRef = useRef<string>("");
+  const speechQueueRef = useRef<string[]>([]);
+  const isSpeakingRef = useRef<boolean>(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,6 +126,31 @@ export function ChatPane() {
       speak(content, settings.voice_tts_rate);
     }
   }
+
+  function processQueue() {
+    if (isSpeakingRef.current) return;
+    if (speechQueueRef.current.length === 0) return;
+    const sentence = speechQueueRef.current.shift();
+    if (!sentence) return;
+
+    const utterance = new SpeechSynthesisUtterance(sentence);
+    utterance.onend = () => {
+      isSpeakingRef.current = false;
+      processQueue();
+    };
+    utterance.onerror = () => {
+      isSpeakingRef.current = false;
+      processQueue();
+    };
+
+    isSpeakingRef.current = true;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  // Sync auto-speak setting from app settings
+  useEffect(() => {
+    setAutoSpeakEnabled(settings.voice_tts_auto_speak);
+  }, [settings.voice_tts_auto_speak]);
 
   // Clear speakingMsgId when TTS finishes
   useEffect(() => {
@@ -152,6 +181,15 @@ export function ChatPane() {
 
   async function handleSend() {
     if (!input.trim() || !activeChatId || isGenerating) return;
+
+    // Stop any currently playing speech and clear the queue when starting a new message
+    if (ttsState === "speaking") {
+      stopSpeaking();
+    }
+    window.speechSynthesis.cancel();
+    speechQueueRef.current = [];
+    isSpeakingRef.current = false;
+    sentenceBufferRef.current = "";
 
     const now = new Date().toISOString();
     const userContent = input.trim();
@@ -214,6 +252,9 @@ export function ChatPane() {
     setIsGenerating(true);
     abortRef.current = new AbortController();
     let finalContent = "";
+    
+    // Clear sentence buffer for streaming TTS
+    sentenceBufferRef.current = "";
 
     try {
       // Build message history with context system prompt injected at the front
@@ -270,6 +311,23 @@ export function ChatPane() {
             if (chunk.message?.content) {
               finalContent += chunk.message.content;
               updateStreamingMessage(activeChatId, assistantId, chunk.message.content);
+
+              // Streaming TTS: queue complete sentences and play them sequentially
+              if (autoSpeakEnabled && ttsSupported) {
+                sentenceBufferRef.current += chunk.message.content;
+
+                let sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
+                while (sentenceMatch) {
+                  const endIndex = sentenceMatch.index! + sentenceMatch[0].length;
+                  const sentenceToSpeak = sentenceBufferRef.current.substring(0, endIndex).trim();
+                  sentenceBufferRef.current = sentenceBufferRef.current.substring(endIndex).trim();
+                  if (sentenceToSpeak) {
+                    speechQueueRef.current.push(sentenceToSpeak);
+                  }
+                  sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
+                }
+                processQueue();
+              }
             }
           } catch {
             // malformed chunk
@@ -294,6 +352,13 @@ export function ChatPane() {
         model_used: settings.chat_model,
         created_at: assistantCreatedAt,
       });
+
+      // Queue any remaining buffered text once streaming ends
+      if (autoSpeakEnabled && ttsSupported && sentenceBufferRef.current.trim()) {
+        speechQueueRef.current.push(sentenceBufferRef.current.trim());
+        sentenceBufferRef.current = "";
+        processQueue();
+      }
 
       // Schedule memory extraction after 5 min of idle (if enabled)
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -332,11 +397,56 @@ export function ChatPane() {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full">
-      <div className="flex items-center justify-between pl-4 pr-32 py-2.5 border-b border-border shrink-0">
+      <div className="flex items-center justify-between pl-4 pr-4 py-2.5 border-b border-border shrink-0">
         <span className="text-sm font-medium text-foreground truncate">
           {activeChat?.title || "New Chat"}
         </span>
-        <ModelSelector />
+        <div className="flex items-center gap-2">
+          {ttsSupported && (
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={async () => {
+                const newState = !autoSpeakEnabled;
+                setAutoSpeakEnabled(newState);
+                await import("@/lib/settings").then((m) =>
+                  m.saveSetting("voice_tts_auto_speak", String(newState))
+                );
+              }}
+              title={autoSpeakEnabled ? "Auto-speak on — click to disable" : "Enable auto-speak"}
+              className={cn(
+                "h-8 w-8 transition-colors",
+                autoSpeakEnabled
+                  ? "text-primary bg-primary/10"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {autoSpeakEnabled ? (
+                <Volume className="w-4 h-4" />
+              ) : (
+                <VolumeX className="w-4 h-4" />
+              )}
+            </Button>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => setGraphOpen(true)}
+            title="Open knowledge graph"
+            className="h-8 w-8"
+          >
+            <Network className="w-4 h-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => setSettingsPanelOpen(true)}
+            title="Open settings"
+            className="h-8 w-8"
+          >
+            <Settings className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
@@ -362,6 +472,7 @@ export function ChatPane() {
 
       <div className="shrink-0 border-t border-border px-4 py-3">
         <div className="flex items-end gap-2 bg-card rounded-xl border border-border px-3 py-2">
+          <ModelSelector />
           {sttSupported && (
             <Button
               size="icon"

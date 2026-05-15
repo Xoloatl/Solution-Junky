@@ -126,19 +126,21 @@ export function useTTS() {
 // asterisks, backticks, brackets, etc. aloud.
 function stripMarkdown(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, "")       // fenced code blocks
-    .replace(/`[^`]+`/g, "")              // inline code
-    .replace(/#{1,6}\s/g, "")             // headings
-    .replace(/\*\*(.+?)\*\*/g, "$1")      // bold
-    .replace(/\*(.+?)\*/g, "$1")          // italic
-    .replace(/__(.+?)__/g, "$1")          // bold alt
-    .replace(/_(.+?)_/g, "$1")            // italic alt
-    .replace(/\[(\d+)\]/g, "")            // citation markers [1]
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // links
-    .replace(/^\s*[-*+]\s/gm, "")         // list bullets
-    .replace(/^\s*\d+\.\s/gm, "")         // ordered lists
-    .replace(/>/g, "")                    // blockquotes
-    .replace(/\n{2,}/g, ". ")             // double newlines → pause
+    .replace(/```[\s\S]*?```/g, "code block")     // fenced code blocks → "code block"
+    .replace(/`[^`]+`/g, "")                      // inline code
+    .replace(/#{1,6}\s+/g, "")                    // headings (# followed by space)
+    .replace(/\*\*(.+?)\*\*/g, "$1")              // bold
+    .replace(/\*(.+?)\*/g, "$1")                  // italic
+    .replace(/__(.+?)__/g, "$1")                  // bold alt
+    .replace(/_(.+?)_/g, "$1")                    // italic alt
+    .replace(/\[(\d+)\]/g, "")                    // citation markers [1]
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")      // markdown links [text](url)
+    .replace(/https?:\/\/\S+/g, "link")           // bare URLs → "link"
+    .replace(/www\.\S+/g, "link")                 // www URLs → "link"
+    .replace(/^\s*[-*+]\s/gm, "")                 // list bullets
+    .replace(/^\s*\d+\.\s/gm, "")                 // ordered lists
+    .replace(/^>\s*/gm, "")                       // blockquotes
+    .replace(/\n{2,}/g, ". ")                     // double newlines → pause
     .replace(/\n/g, " ")
     .trim();
 }

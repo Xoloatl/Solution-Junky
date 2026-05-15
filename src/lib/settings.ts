@@ -11,6 +11,7 @@ export interface AppSettings {
   category_auto_suggest: boolean;
   voice_stt_lang: string;
   voice_tts_rate: number;
+  voice_tts_auto_speak: boolean;
   ocr_lang: string;
   searxng_url: string;
   web_search_enabled: boolean;
@@ -25,6 +26,7 @@ export const DEFAULTS: AppSettings = {
   category_auto_suggest: true,
   voice_stt_lang: "en-US",
   voice_tts_rate: 1.0,
+  voice_tts_auto_speak: false,
   ocr_lang: "eng",
   searxng_url: "http://localhost:8888",
   web_search_enabled: false,
@@ -42,6 +44,7 @@ export async function loadSettings(): Promise<AppSettings> {
     category_auto_suggest: (raw.category_auto_suggest ?? "true") === "true",
     voice_stt_lang: raw.voice_stt_lang ?? DEFAULTS.voice_stt_lang,
     voice_tts_rate: parseFloat(raw.voice_tts_rate ?? "1.0"),
+    voice_tts_auto_speak: (raw.voice_tts_auto_speak ?? "false") === "true",
     ocr_lang: raw.ocr_lang ?? DEFAULTS.ocr_lang,
     searxng_url: raw.searxng_url ?? DEFAULTS.searxng_url,
     web_search_enabled: (raw.web_search_enabled ?? "false") === "true",
