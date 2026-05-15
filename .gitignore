@@ -1,0 +1,8 @@
+node_modules/
+src-tauri/target/
+src-tauri/vendor/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.env

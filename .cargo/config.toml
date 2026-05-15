@@ -1,0 +1,5 @@
+# whisper-rs-sys: skip bindgen (needs libclang). Bundled `bindings.rs` is stripped of layout
+# const-tests for Windows — see `src-tauri/scripts/strip_whisper_bindgen_layouts.py`.
+# MinGW: vendored `whisper-rs-sys` omits MSVC-only `/utf-8` (see `src-tauri/vendor/.../build.rs`).
+[env]
+WHISPER_DONT_GENERATE_BINDINGS = "1"
