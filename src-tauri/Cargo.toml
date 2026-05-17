@@ -27,6 +27,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 lopdf = "0.34"
+image = "0.24"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 urlencoding = "2"
 # Audio capture and local Whisper speech recognition are optional.

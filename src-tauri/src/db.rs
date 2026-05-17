@@ -1,6 +1,7 @@
-use rusqlite::{params, Connection};
-use std::path::Path;
 use crate::error::Result;
+use rusqlite::{params, Connection};
+use std::collections::HashSet;
+use std::path::Path;
 
 pub struct DbState(pub std::sync::Mutex<Connection>);
 
@@ -12,7 +13,36 @@ pub fn open(app_dir: &Path) -> Result<(Connection, std::path::PathBuf)> {
     let conn = Connection::open(&db_path)?;
     conn.execute_batch(PRAGMAS)?;
     conn.execute_batch(SCHEMA)?;
+    migrate_database(&conn)?;
     Ok((conn, db_path))
+}
+
+fn migrate_database(conn: &Connection) -> Result<()> {
+    let columns = get_table_columns(conn, "documents")?;
+
+    if !columns.contains("source_type") {
+        conn.execute(
+            "ALTER TABLE documents ADD COLUMN source_type TEXT NOT NULL DEFAULT 'pdf'",
+            [],
+        )?;
+    }
+
+    if !columns.contains("metadata_json") {
+        conn.execute("ALTER TABLE documents ADD COLUMN metadata_json TEXT", [])?;
+    }
+
+    Ok(())
+}
+
+fn get_table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    let mut result = HashSet::new();
+    while let Some(row) = rows.next()? {
+        let col_name: String = row.get(1)?;
+        result.insert(col_name);
+    }
+    Ok(result)
 }
 
 pub fn get_setting(conn: &Connection, key: &str, default: &str) -> Result<String> {
@@ -61,14 +91,16 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE TABLE IF NOT EXISTS documents (
-    id          TEXT PRIMARY KEY,
-    filename    TEXT NOT NULL,
-    filepath    TEXT NOT NULL,
-    mime_type   TEXT NOT NULL DEFAULT 'application/pdf',
-    page_count  INTEGER,
-    ocr_applied INTEGER NOT NULL DEFAULT 0,
-    uploaded_at TEXT NOT NULL,
-    category_id TEXT REFERENCES categories(id)
+    id           TEXT PRIMARY KEY,
+    filename     TEXT NOT NULL,
+    filepath     TEXT NOT NULL,
+    mime_type    TEXT NOT NULL DEFAULT 'application/pdf',
+    source_type  TEXT NOT NULL DEFAULT 'pdf',
+    metadata_json TEXT,
+    page_count   INTEGER,
+    ocr_applied  INTEGER NOT NULL DEFAULT 0,
+    uploaded_at  TEXT NOT NULL,
+    category_id  TEXT REFERENCES categories(id)
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -147,6 +179,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_messages USING fts5(
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_audit (
+    id            TEXT PRIMARY KEY,
+    task          TEXT NOT NULL,
+    model         TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT NOT NULL,
+    duration_ms   INTEGER NOT NULL,
+    details_json  TEXT,
+    error_message TEXT,
+    tokens_in     INTEGER,
+    tokens_out    INTEGER
 );
 
 -- Seed defaults (INSERT OR IGNORE so existing values are never overwritten)

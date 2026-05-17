@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import {
   MessageSquare, Pin, Archive, Plus, Search,
   ChevronDown, ChevronRight, Trash2, MoreHorizontal, Brain, Command,
@@ -26,6 +26,16 @@ interface ChatRowProps {
 
 function ChatRow({ chat, active, onSelect, onPin, onArchive, onDelete }: ChatRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleDeleteClick = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    onDelete();
+  };
 
   return (
     <div
@@ -34,6 +44,7 @@ function ChatRow({ chat, active, onSelect, onPin, onArchive, onDelete }: ChatRow
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
       )}
       onClick={onSelect}
+      onMouseLeave={() => setConfirmDelete(false)}
     >
       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate flex-1">{chat.title || "New Chat"}</span>
@@ -42,85 +53,104 @@ function ChatRow({ chat, active, onSelect, onPin, onArchive, onDelete }: ChatRow
         <Pin className="w-3 h-3 shrink-0 opacity-40" />
       )}
 
-      <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenu.Trigger asChild>
-          <button
-            onClick={(e) => e.stopPropagation()}
-            className={cn(
-              "shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity",
-              menuOpen && "opacity-100",
-              "hover:bg-accent text-muted-foreground hover:text-foreground"
-            )}
-          >
-            <MoreHorizontal className="w-3.5 h-3.5" />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            side="right"
-            align="start"
-            sideOffset={4}
-            onClick={(e) => e.stopPropagation()}
-            className="z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-lg text-xs"
-          >
-            <DropdownMenu.Item
-              onSelect={onPin}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
-            >
-              <Pin className="w-3 h-3" />
-              {chat.pinned ? "Unpin" : "Pin"}
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
-              onSelect={onArchive}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
-            >
-              <Archive className="w-3 h-3" />
-              Archive
-            </DropdownMenu.Item>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={handleDeleteClick}
+          className={cn(
+            "shrink-0 rounded p-0.5 transition-colors text-muted-foreground hover:text-destructive hover:bg-destructive/10",
+            confirmDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
+          aria-label={confirmDelete ? "Confirm delete chat" : "Delete chat"}
+          type="button"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+        {confirmDelete && (
+          <span className="text-[11px] text-destructive font-medium select-none">
+            Confirm?
+          </span>
+        )}
 
-            <DropdownMenu.Separator className="h-px bg-border my-1" />
+        <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenu.Trigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className={cn(
+                "shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity",
+                menuOpen && "opacity-100",
+                "hover:bg-accent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              side="right"
+              align="start"
+              sideOffset={4}
+              onClick={(e) => e.stopPropagation()}
+              className="z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 shadow-lg text-xs"
+            >
+              <DropdownMenu.Item
+                onSelect={onPin}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
+              >
+                <Pin className="w-3 h-3" />
+                {chat.pinned ? "Unpin" : "Pin"}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                onSelect={onArchive}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
+              >
+                <Archive className="w-3 h-3" />
+                Archive
+              </DropdownMenu.Item>
 
-            {/* Export submenu */}
-            <DropdownMenu.Sub>
-              <DropdownMenu.SubTrigger className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none">
-                <Download className="w-3 h-3" />
-                Export
-                <ChevronRight className="w-3 h-3 ml-auto" />
-              </DropdownMenu.SubTrigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.SubContent
-                  sideOffset={4}
-                  className="z-50 min-w-[140px] rounded-md border border-border bg-popover p-1 shadow-lg text-xs"
-                >
-                  <DropdownMenu.Item
-                    onSelect={() => exportChatMarkdown(chat.id, chat.title)}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
+              <DropdownMenu.Separator className="h-px bg-border my-1" />
+
+              {/* Export submenu */}
+              <DropdownMenu.Sub>
+                <DropdownMenu.SubTrigger className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none">
+                  <Download className="w-3 h-3" />
+                  Export
+                  <ChevronRight className="w-3 h-3 ml-auto" />
+                </DropdownMenu.SubTrigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.SubContent
+                    sideOffset={4}
+                    className="z-50 min-w-[140px] rounded-md border border-border bg-popover p-1 shadow-lg text-xs"
                   >
-                    <FileText className="w-3 h-3" />
-                    Markdown
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    onSelect={() => exportChatJson(chat.id, chat.title)}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
-                  >
-                    <FileJson className="w-3 h-3" />
-                    JSON
-                  </DropdownMenu.Item>
-                </DropdownMenu.SubContent>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Sub>
+                    <DropdownMenu.Item
+                      onSelect={() => exportChatMarkdown(chat.id, chat.title)}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
+                    >
+                      <FileText className="w-3 h-3" />
+                      Markdown
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      onSelect={() => exportChatJson(chat.id, chat.title)}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-foreground hover:bg-accent outline-none"
+                    >
+                      <FileJson className="w-3 h-3" />
+                      JSON
+                    </DropdownMenu.Item>
+                  </DropdownMenu.SubContent>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Sub>
 
-            <DropdownMenu.Separator className="h-px bg-border my-1" />
-            <DropdownMenu.Item
-              onSelect={onDelete}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-destructive hover:bg-destructive/10 outline-none"
-            >
-              <Trash2 className="w-3 h-3" />
-              Delete
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+              <DropdownMenu.Separator className="h-px bg-border my-1" />
+              <DropdownMenu.Item
+                onSelect={onDelete}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer text-destructive hover:bg-destructive/10 outline-none"
+              >
+                <Trash2 className="w-3 h-3" />
+                Delete
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
     </div>
   );
 }
@@ -238,9 +268,25 @@ export function Sidebar() {
   }
 
   async function handleDelete(chat: Chat) {
+    const remainingChats = chats.filter((c) => c.id !== chat.id);
     await db.deleteChat(chat.id);
     removeChat(chat.id);
-    if (activeChatId === chat.id) setActiveChatId(null);
+
+    if (activeChatId === chat.id) {
+      const nextChat = remainingChats
+        .slice()
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
+
+      if (nextChat) {
+        setActiveChatId(nextChat.id);
+      } else {
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        const newChat = await db.createChat({ id, title: "New Chat", created_at: now });
+        upsertChat(newChat);
+        setActiveChatId(id);
+      }
+    }
   }
 
   return (

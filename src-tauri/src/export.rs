@@ -1,6 +1,6 @@
+use crate::error::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use crate::error::Result;
 
 #[derive(Serialize)]
 pub struct ExportMessage {
@@ -24,12 +24,14 @@ fn load_export(conn: &Connection, chat_id: &str) -> Result<ExportChat> {
     let (id, title, created_at, updated_at) = conn.query_row(
         "SELECT id, title, created_at, updated_at FROM chats WHERE id = ?1",
         params![chat_id],
-        |row| Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        )),
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        },
     )?;
 
     let mut stmt = conn.prepare(
@@ -48,7 +50,13 @@ fn load_export(conn: &Connection, chat_id: &str) -> Result<ExportChat> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
-    Ok(ExportChat { id, title, created_at, updated_at, messages })
+    Ok(ExportChat {
+        id,
+        title,
+        created_at,
+        updated_at,
+        messages,
+    })
 }
 
 pub fn to_markdown(conn: &Connection, chat_id: &str) -> Result<String> {

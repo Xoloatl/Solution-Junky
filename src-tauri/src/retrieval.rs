@@ -1,8 +1,8 @@
+use crate::embeddings::{cosine_similarity, from_blob};
+use crate::error::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::HashMap;
-use crate::embeddings::{cosine_similarity, from_blob};
-use crate::error::Result;
 
 const BM25_TOP: usize = 20;
 const VEC_TOP: usize = 20;
@@ -112,7 +112,13 @@ pub fn resolve_chunks(conn: &Connection, fused: &[(String, f32)]) -> Result<Vec<
 fn sanitize_fts_query(query: &str) -> String {
     let clean: String = query
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == ' ' || c == '-' {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     clean
         .split_whitespace()

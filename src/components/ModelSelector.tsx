@@ -3,7 +3,7 @@ import * as Select from "@radix-ui/react-select";
 import { ChevronDown, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
-import { inTauri } from "@/lib/db";
+import { getModels, inTauri } from "@/lib/db";
 
 function formatSize(bytes: number): string {
   const gb = bytes / 1e9;
@@ -22,17 +22,7 @@ export function ModelSelector() {
 
   async function fetchModels() {
     try {
-      type RawModel = { name: string; size: number; details?: { family?: string } };
-      let models: RawModel[] = [];
-      if (inTauri) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        models = await invoke<RawModel[]>("get_models", { ollamaUrl: settings.ollama_url });
-      } else {
-        const res = await fetch(`${settings.ollama_url}/api/tags`);
-        if (!res.ok) return;
-        const data = await res.json() as { models: RawModel[] };
-        models = data.models;
-      }
+      const models = inTauri ? await getModels() : [];
       setAvailableModels(models.map((m) => ({
         name: m.name,
         size: m.size,

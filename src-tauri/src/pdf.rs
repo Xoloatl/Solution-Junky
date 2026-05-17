@@ -1,5 +1,5 @@
-use lopdf::Document;
 use crate::error::{AppError, Result};
+use lopdf::Document;
 
 pub struct PageText {
     pub page_number: u32,

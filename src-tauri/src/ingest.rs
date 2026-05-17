@@ -1,10 +1,13 @@
 use rusqlite::params;
 use serde::Serialize;
+use serde_json;
 use tauri::Emitter;
 
+use crate::ai::router::AiRouter;
 use crate::db::DbState;
 use crate::embeddings;
 use crate::error::{AppError, Result};
+use crate::image;
 use crate::ocr;
 use crate::pdf;
 
@@ -43,6 +46,29 @@ pub async fn run(
     filename: String,
     ocr_lang: String,
 ) -> Result<IngestComplete> {
+    let extension = std::path::Path::new(&filepath)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match extension.as_str() {
+        "pdf" => run_pdf(app, state, doc_id, filepath, filename, ocr_lang).await,
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tiff" | "tif" => {
+            run_image(app, state, doc_id, filepath, filename, ocr_lang).await
+        }
+        other => Err(AppError::Other(format!("Unsupported file type: {other}"))),
+    }
+}
+
+async fn run_pdf(
+    app: tauri::AppHandle,
+    state: &DbState,
+    doc_id: String,
+    filepath: String,
+    filename: String,
+    ocr_lang: String,
+) -> Result<IngestComplete> {
     let emit = |stage: &str, current: usize, total: usize| {
         let _ = app.emit(
             "ingest:progress",
@@ -55,15 +81,12 @@ pub async fn run(
         );
     };
 
-    // ── 1. Extract text ───────────────────────────────────────────────────────
     emit("Extracting text…", 0, 1);
     let mut pages = pdf::extract_text(&filepath)?;
-    let page_count = pages.len();
+    let mut ocr_applied = false;
 
-    // ── 2. OCR check + fallback ───────────────────────────────────────────────
     let avg_chars = pdf::average_chars_per_page(&pages);
     let needs_ocr = avg_chars < 100;
-    let ocr_applied;
 
     if needs_ocr {
         if ocr::is_available() {
@@ -74,7 +97,6 @@ pub async fn run(
                     ocr_applied = true;
                 }
                 Ok(_) => {
-                    // Tesseract returned nothing — keep lopdf output
                     ocr_applied = false;
                 }
                 Err(e) => {
@@ -103,37 +125,137 @@ pub async fn run(
             );
             ocr_applied = false;
         }
-    } else {
-        ocr_applied = false;
     }
 
-    // ── 3. Chunk ──────────────────────────────────────────────────────────────
+    let metadata_json = Some(
+        serde_json::json!({
+            "extractor": "lopdf",
+            "ocr_fallback": ocr_applied,
+        })
+        .to_string(),
+    );
+
+    run_common(
+        app,
+        state,
+        doc_id,
+        filepath,
+        filename,
+        "pdf",
+        "application/pdf",
+        metadata_json,
+        pages,
+        ocr_applied,
+    )
+    .await
+}
+
+async fn run_image(
+    app: tauri::AppHandle,
+    state: &DbState,
+    doc_id: String,
+    filepath: String,
+    filename: String,
+    ocr_lang: String,
+) -> Result<IngestComplete> {
+    let emit = |stage: &str, current: usize, total: usize| {
+        let _ = app.emit(
+            "ingest:progress",
+            IngestProgress {
+                doc_id: doc_id.clone(),
+                stage: stage.to_string(),
+                current,
+                total,
+            },
+        );
+    };
+
+    emit("Reading image metadata…", 0, 1);
+    let metadata = image::read_metadata(&filepath)?;
+    let metadata_json = Some(
+        serde_json::to_string(&metadata)
+            .map_err(|e| AppError::Other(format!("failed to serialize image metadata: {e}")))?,
+    );
+
+    emit("Running OCR…", 0, 1);
+    let pages = ocr::ocr_image(&filepath, &ocr_lang)?;
+    let ocr_applied = true;
+
+    let mime_type = image_mime_type(&metadata.format);
+
+    run_common(
+        app,
+        state,
+        doc_id,
+        filepath,
+        filename,
+        "image",
+        &mime_type,
+        metadata_json,
+        pages,
+        ocr_applied,
+    )
+    .await
+}
+
+fn image_mime_type(format: &str) -> String {
+    match format {
+        "png" => "image/png".to_string(),
+        "jpeg" => "image/jpeg".to_string(),
+        "jpg" => "image/jpeg".to_string(),
+        "webp" => "image/webp".to_string(),
+        "bmp" => "image/bmp".to_string(),
+        "tiff" => "image/tiff".to_string(),
+        _ => "application/octet-stream".to_string(),
+    }
+}
+
+async fn run_common(
+    app: tauri::AppHandle,
+    state: &DbState,
+    doc_id: String,
+    filepath: String,
+    filename: String,
+    source_type: &str,
+    mime_type: &str,
+    metadata_json: Option<String>,
+    pages: Vec<pdf::PageText>,
+    ocr_applied: bool,
+) -> Result<IngestComplete> {
+    let emit = |stage: &str, current: usize, total: usize| {
+        let _ = app.emit(
+            "ingest:progress",
+            IngestProgress {
+                doc_id: doc_id.clone(),
+                stage: stage.to_string(),
+                current,
+                total,
+            },
+        );
+    };
+
     emit("Chunking…", 0, 1);
     let chunks = pdf::chunk_pages(&pages);
     let chunk_count = chunks.len();
+    let page_count = pages.len();
 
-    // ── 4. Embed ──────────────────────────────────────────────────────────────
     let texts: Vec<String> = chunks.iter().map(|c| c.content.clone()).collect();
     let embeddings = {
         let mut all = Vec::with_capacity(texts.len());
         let batch_size = 32;
         for (batch_idx, batch) in texts.chunks(batch_size).enumerate() {
-            emit(
-                "Embedding…",
-                batch_idx * batch_size,
-                texts.len(),
-            );
+            emit("Embedding…", batch_idx * batch_size, texts.len());
             let refs: Vec<&str> = batch.iter().map(|s| s.as_str()).collect();
-            let (ollama_url, embedding_model) = {
-                let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
-                let url = crate::db::get_setting(&conn, "ollama_url", "http://localhost:11434")?;
-                let model = crate::db::get_setting(&conn, "embedding_model", "nomic-embed-text")?;
-                (url, model)
+            let router = {
+                let conn = state
+                    .0
+                    .lock()
+                    .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+                AiRouter::from_connection(&conn)?
             };
-            match embeddings::embed_batch(&ollama_url, &embedding_model, &refs).await {
+            match router.embed_batch(&refs).await {
                 Ok(mut v) => all.append(&mut v),
                 Err(e) => {
-                    // Embedding failed (nomic not pulled?) — store chunks without embeddings
                     eprintln!("embed batch failed: {e}");
                     for _ in batch {
                         all.push(vec![]);
@@ -144,7 +266,6 @@ pub async fn run(
         all
     };
 
-    // ── 5. Persist ────────────────────────────────────────────────────────────
     emit("Saving…", 0, 1);
     {
         let conn = state
@@ -154,15 +275,23 @@ pub async fn run(
 
         let now = chrono_now();
 
-        // Document record
         conn.execute(
             "INSERT OR REPLACE INTO documents
-             (id, filename, filepath, mime_type, page_count, ocr_applied, uploaded_at)
-             VALUES (?1, ?2, ?3, 'application/pdf', ?4, ?5, ?6)",
-            params![doc_id, filename, filepath, page_count as i64, ocr_applied as i32, now],
+             (id, filename, filepath, mime_type, source_type, metadata_json, page_count, ocr_applied, uploaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                doc_id,
+                filename,
+                filepath,
+                mime_type,
+                source_type,
+                metadata_json.as_deref(),
+                page_count as i64,
+                ocr_applied as i32,
+                now,
+            ],
         )?;
 
-        // Chunks + embeddings
         for (i, (chunk, embedding)) in chunks.iter().zip(embeddings.iter()).enumerate() {
             let chunk_id = format!("{doc_id}:{i}");
             let blob = if embedding.is_empty() {
@@ -184,14 +313,12 @@ pub async fn run(
                     blob,
                 ],
             )?;
-            // Index in FTS for BM25 retrieval
             conn.execute(
                 "INSERT INTO fts_chunks (chunk_id, content) VALUES (?1, ?2)",
                 params![chunk_id, chunk.content],
             )?;
         }
 
-        // Graph node
         let node_id = format!("node:doc:{doc_id}");
         conn.execute(
             "INSERT OR REPLACE INTO nodes (id, node_type, ref_id, label)
@@ -215,6 +342,5 @@ fn chrono_now() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // ISO-ish string without chrono dep
     format!("{secs}")
 }

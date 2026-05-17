@@ -1,6 +1,6 @@
+use crate::error::{AppError, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use crate::error::{AppError, Result};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct WebResult {
@@ -43,7 +43,10 @@ pub async fn search(base_url: &str, query: &str) -> Result<Vec<WebResult>> {
         .map_err(|e| AppError::Other(format!("SearXNG request: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Other(format!("SearXNG returned {}", resp.status())));
+        return Err(AppError::Other(format!(
+            "SearXNG returned {}",
+            resp.status()
+        )));
     }
 
     let body: SearxResponse = resp

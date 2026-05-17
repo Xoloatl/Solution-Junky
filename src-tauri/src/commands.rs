@@ -1,17 +1,18 @@
+use crate::ai::router::AiRouter;
+use crate::ai::types::{ChatCompletionResponse, ChatMessage, OllamaModel};
+use crate::db::DbPathState;
+use crate::db::DbState;
+use crate::error::AppError;
+use crate::export;
+use crate::ingest;
+use crate::memory;
+use crate::memory::load_conversation;
+use crate::retrieval;
+use crate::search;
+use crate::websearch;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use crate::db::DbState;
-use crate::error::AppError;
-use crate::ingest;
-use crate::memory;
-use crate::retrieval;
-use crate::search;
-use crate::categorization;
-use crate::export;
-use crate::websearch;
-use crate::memory::load_conversation;
-use crate::db::DbPathState;
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -58,7 +59,10 @@ pub struct SaveMessageArgs {
 
 #[tauri::command]
 pub fn list_chats(state: State<DbState>) -> Result<Vec<Chat>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let mut stmt = conn.prepare(
         "SELECT id, title, category_id, created_at, updated_at, pinned, archived
          FROM chats
@@ -81,7 +85,10 @@ pub fn list_chats(state: State<DbState>) -> Result<Vec<Chat>, AppError> {
 
 #[tauri::command]
 pub fn create_chat(state: State<DbState>, args: CreateChatArgs) -> Result<Chat, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "INSERT INTO chats (id, title, created_at, updated_at, pinned, archived)
          VALUES (?1, ?2, ?3, ?3, 0, 0)",
@@ -105,7 +112,10 @@ pub fn update_chat_title(
     title: String,
     updated_at: String,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
         params![title, updated_at, chat_id],
@@ -119,7 +129,10 @@ pub fn touch_chat(
     chat_id: String,
     updated_at: String,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE chats SET updated_at = ?1 WHERE id = ?2",
         params![updated_at, chat_id],
@@ -129,7 +142,10 @@ pub fn touch_chat(
 
 #[tauri::command]
 pub fn pin_chat(state: State<DbState>, chat_id: String, pinned: bool) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE chats SET pinned = ?1 WHERE id = ?2",
         params![pinned as i32, chat_id],
@@ -139,7 +155,10 @@ pub fn pin_chat(state: State<DbState>, chat_id: String, pinned: bool) -> Result<
 
 #[tauri::command]
 pub fn archive_chat(state: State<DbState>, chat_id: String) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE chats SET archived = 1 WHERE id = ?1",
         params![chat_id],
@@ -149,7 +168,10 @@ pub fn archive_chat(state: State<DbState>, chat_id: String) -> Result<(), AppErr
 
 #[tauri::command]
 pub fn delete_chat(state: State<DbState>, chat_id: String) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute("DELETE FROM chats WHERE id = ?1", params![chat_id])?;
     Ok(())
 }
@@ -158,7 +180,10 @@ pub fn delete_chat(state: State<DbState>, chat_id: String) -> Result<(), AppErro
 
 #[tauri::command]
 pub fn get_messages(state: State<DbState>, chat_id: String) -> Result<Vec<Message>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let mut stmt = conn.prepare(
         "SELECT id, chat_id, role, content, model_used, created_at, token_count
          FROM messages
@@ -181,7 +206,10 @@ pub fn get_messages(state: State<DbState>, chat_id: String) -> Result<Vec<Messag
 
 #[tauri::command]
 pub fn save_message(state: State<DbState>, args: SaveMessageArgs) -> Result<Message, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "INSERT INTO messages (id, chat_id, role, content, model_used, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -224,7 +252,10 @@ pub fn update_message_content(
     message_id: String,
     content: String,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE messages SET content = ?1 WHERE id = ?2",
         params![content, message_id],
@@ -251,7 +282,10 @@ pub struct Document {
 
 #[tauri::command]
 pub fn list_documents(state: State<DbState>) -> Result<Vec<Document>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let mut stmt = conn.prepare(
         "SELECT id, filename, filepath, page_count, ocr_applied, uploaded_at, category_id
          FROM documents ORDER BY uploaded_at DESC",
@@ -271,6 +305,29 @@ pub fn list_documents(state: State<DbState>) -> Result<Vec<Document>, AppError> 
 }
 
 #[tauri::command]
+pub async fn ingest_file(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    doc_id: String,
+    filepath: String,
+    filename: String,
+) -> Result<ingest::IngestComplete, AppError> {
+    let ocr_lang = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = 'ocr_lang'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "eng".to_string())
+    };
+    ingest::run(app, &state, doc_id, filepath, filename, ocr_lang).await
+}
+
+#[tauri::command]
 pub async fn ingest_pdf(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
@@ -278,16 +335,7 @@ pub async fn ingest_pdf(
     filepath: String,
     filename: String,
 ) -> Result<ingest::IngestComplete, AppError> {
-    // Read ocr_lang from settings (sync, brief lock)
-    let ocr_lang = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = 'ocr_lang'",
-            [],
-            |row| row.get::<_, String>(0),
-        ).unwrap_or_else(|_| "eng".to_string())
-    };
-    ingest::run(app, &state, doc_id, filepath, filename, ocr_lang).await
+    ingest_file(app, state, doc_id, filepath, filename).await
 }
 
 #[tauri::command]
@@ -302,24 +350,28 @@ pub async fn retrieve_chunks(
 ) -> Result<Vec<retrieval::ChunkResult>, AppError> {
     // 1. BM25 search (sync — acquire and release lock)
     let bm25 = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
         retrieval::bm25_search(&conn, &query)?
     };
 
     // 2. Embed query (async — lock must NOT be held)
-    let (ollama_url, embedding_model) = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
-        let url = crate::db::get_setting(&conn, "ollama_url", "http://localhost:11434")?;
-        let model = crate::db::get_setting(&conn, "embedding_model", "nomic-embed-text")?;
-        (url, model)
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
     };
-    let query_embedding = crate::embeddings::embed_batch(&ollama_url, &embedding_model, &[&query])
-        .await
-        .ok()
-        .and_then(|mut v| v.pop());
+    let query_embedding = router.embed_query(&query).await?;
 
     // 3. Vector search + RRF + resolve (sync)
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let vector = query_embedding
         .as_deref()
         .map(|emb| retrieval::vector_search(&conn, emb).unwrap_or_default())
@@ -340,26 +392,37 @@ pub async fn extract_memory(
 ) -> Result<usize, AppError> {
     // 1. Load conversation (sync)
     let conversation = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
         memory::load_conversation(&conn, &chat_id)?
     };
-    if conversation.len() < 100 { return Ok(0); }
+    if conversation.len() < 100 {
+        return Ok(0);
+    }
 
     // 2. Call LLM for fact extraction (async, no lock)
-    let facts = memory::call_extraction(&model, &conversation).await?;
-    if facts.is_empty() { return Ok(0); }
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
+    };
+    let facts = router.extract_memory(&conversation, &model).await?;
+    if facts.is_empty() {
+        return Ok(0);
+    }
 
     // 3. Embed new facts (async, no lock)
-    let (ollama_url, embedding_model) = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
-        let url = crate::db::get_setting(&conn, "ollama_url", "http://localhost:11434")?;
-        let model = crate::db::get_setting(&conn, "embedding_model", "nomic-embed-text")?;
-        (url, model)
-    };
-    let embeddings = memory::embed_texts(&ollama_url, &embedding_model, &facts).await;
+    let embeddings = router.embed_batch(&facts.iter().map(|s| s.as_str()).collect::<Vec<_>>()).await?;
 
     // 4. Load existing embeddings for dedup + store new facts (sync)
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let existing = memory::load_fact_embeddings(&conn)?;
     memory::store_facts(&conn, &chat_id, &facts, &embeddings, &existing)
 }
@@ -373,27 +436,38 @@ pub async fn get_relevant_memory(
 ) -> Result<Vec<memory::MemoryFact>, AppError> {
     // 1. Load facts with embeddings (sync)
     let facts_with_emb = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
         memory::load_active_facts_with_embeddings(&conn, limit * 3)?
     };
 
     // 2. Embed query (async, no lock)
-    let (ollama_url, embedding_model) = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
-        let url = crate::db::get_setting(&conn, "ollama_url", "http://localhost:11434")?;
-        let model = crate::db::get_setting(&conn, "embedding_model", "nomic-embed-text")?;
-        (url, model)
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
     };
-    let query_emb = memory::embed_query(&ollama_url, &embedding_model, &query).await;
+    let query_emb = router.embed_query(&query).await?;
 
     // 3. Rank (pure, no IO)
-    Ok(memory::rank_facts_by_relevance(facts_with_emb, query_emb.as_deref(), limit))
+    Ok(memory::rank_facts_by_relevance(
+        facts_with_emb,
+        query_emb.as_deref(),
+        limit,
+    ))
 }
 
 /// List all memory facts (for Memory Manager).
 #[tauri::command]
 pub fn list_memory_facts(state: State<DbState>) -> Result<Vec<memory::MemoryFact>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     memory::load_all_facts(&conn)
 }
 
@@ -406,26 +480,38 @@ pub struct UpdateMemoryArgs {
 }
 
 #[tauri::command]
-pub fn update_memory_fact(
-    state: State<DbState>,
-    args: UpdateMemoryArgs,
-) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+pub fn update_memory_fact(state: State<DbState>, args: UpdateMemoryArgs) -> Result<(), AppError> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     if let Some(fact) = &args.fact {
-        conn.execute("UPDATE memory_facts SET fact = ?1 WHERE id = ?2", params![fact, args.id])?;
+        conn.execute(
+            "UPDATE memory_facts SET fact = ?1 WHERE id = ?2",
+            params![fact, args.id],
+        )?;
     }
     if let Some(pinned) = args.user_pinned {
-        conn.execute("UPDATE memory_facts SET user_pinned = ?1 WHERE id = ?2", params![pinned as i32, args.id])?;
+        conn.execute(
+            "UPDATE memory_facts SET user_pinned = ?1 WHERE id = ?2",
+            params![pinned as i32, args.id],
+        )?;
     }
     if let Some(disabled) = args.user_disabled {
-        conn.execute("UPDATE memory_facts SET user_disabled = ?1 WHERE id = ?2", params![disabled as i32, args.id])?;
+        conn.execute(
+            "UPDATE memory_facts SET user_disabled = ?1 WHERE id = ?2",
+            params![disabled as i32, args.id],
+        )?;
     }
     Ok(())
 }
 
 #[tauri::command]
 pub fn delete_memory_fact(state: State<DbState>, id: String) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute("DELETE FROM memory_facts WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -437,7 +523,10 @@ pub fn global_search(
     state: State<DbState>,
     query: String,
 ) -> Result<Vec<search::SearchResult>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     search::global_search(&conn, &query).map_err(AppError::from)
 }
 
@@ -454,7 +543,10 @@ pub struct Category {
 
 #[tauri::command]
 pub fn list_categories(state: State<DbState>) -> Result<Vec<Category>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let mut stmt = conn.prepare(
         "SELECT id, name, color, icon, auto_generated FROM categories ORDER BY name ASC",
     )?;
@@ -483,7 +575,10 @@ pub fn create_category(
     state: State<DbState>,
     args: CreateCategoryArgs,
 ) -> Result<Category, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "INSERT OR IGNORE INTO categories (id, name, color, auto_generated) VALUES (?1, ?2, ?3, ?4)",
         params![args.id, args.name, args.color, args.auto_generated as i32],
@@ -499,9 +594,15 @@ pub fn create_category(
 
 #[tauri::command]
 pub fn delete_category(state: State<DbState>, id: String) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     // Unlink chats first so FK is not violated
-    conn.execute("UPDATE chats SET category_id = NULL WHERE category_id = ?1", params![id])?;
+    conn.execute(
+        "UPDATE chats SET category_id = NULL WHERE category_id = ?1",
+        params![id],
+    )?;
     conn.execute("DELETE FROM categories WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -512,7 +613,10 @@ pub fn assign_chat_category(
     chat_id: String,
     category_id: Option<String>,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "UPDATE chats SET category_id = ?1 WHERE id = ?2",
         params![category_id, chat_id],
@@ -550,18 +654,21 @@ pub struct GraphData {
 /// Creates nodes for any chats/categories that don't have one yet.
 #[tauri::command]
 pub fn get_graph(state: State<DbState>) -> Result<GraphData, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
 
     // Ensure every chat has a graph node
     conn.execute_batch(
         "INSERT OR IGNORE INTO nodes (id, node_type, ref_id, label)
-         SELECT 'node:chat:' || id, 'chat', id, title FROM chats WHERE archived = 0;"
+         SELECT 'node:chat:' || id, 'chat', id, title FROM chats WHERE archived = 0;",
     )?;
 
     // Ensure every category has a graph node
     conn.execute_batch(
         "INSERT OR IGNORE INTO nodes (id, node_type, ref_id, label)
-         SELECT 'node:cat:' || id, 'category', id, name FROM categories;"
+         SELECT 'node:cat:' || id, 'category', id, name FROM categories;",
     )?;
 
     // Create edges: category → chat
@@ -579,29 +686,34 @@ pub fn get_graph(state: State<DbState>) -> Result<GraphData, AppError> {
     let mut nstmt = conn.prepare(
         "SELECT id, node_type, ref_id, label, metadata_json FROM nodes ORDER BY node_type",
     )?;
-    let nodes = nstmt.query_map([], |row| {
-        Ok(GraphNode {
-            id: row.get(0)?,
-            node_type: row.get(1)?,
-            ref_id: row.get(2)?,
-            label: row.get(3)?,
-            metadata_json: row.get(4)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>().map_err(AppError::from)?;
+    let nodes = nstmt
+        .query_map([], |row| {
+            Ok(GraphNode {
+                id: row.get(0)?,
+                node_type: row.get(1)?,
+                ref_id: row.get(2)?,
+                label: row.get(3)?,
+                metadata_json: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)?;
 
     // Load edges (only between existing nodes to avoid FK issues)
-    let mut estmt = conn.prepare(
-        "SELECT id, source_node_id, target_node_id, edge_type, weight FROM edges",
-    )?;
-    let edges = estmt.query_map([], |row| {
-        Ok(GraphEdge {
-            id: row.get(0)?,
-            source: row.get(1)?,
-            target: row.get(2)?,
-            edge_type: row.get(3)?,
-            weight: row.get(4)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>().map_err(AppError::from)?;
+    let mut estmt =
+        conn.prepare("SELECT id, source_node_id, target_node_id, edge_type, weight FROM edges")?;
+    let edges = estmt
+        .query_map([], |row| {
+            Ok(GraphEdge {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                target: row.get(2)?,
+                edge_type: row.get(3)?,
+                weight: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AppError::from)?;
 
     Ok(GraphData { nodes, edges })
 }
@@ -617,33 +729,43 @@ pub async fn suggest_chat_category(
 ) -> Result<Option<String>, AppError> {
     // Load conversation (sync, brief lock)
     let conversation = {
-        let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
         load_conversation(&conn, &chat_id)?
     };
     if conversation.len() < 80 {
         return Ok(None);
     }
     // Call LLM (async, no lock)
-    categorization::suggest_category(&model, &conversation).await
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
+    };
+    router.suggest_category(&conversation, &model).await
 }
 
 // ── Export / Backup commands ──────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn export_chat_markdown(
-    state: State<DbState>,
-    chat_id: String,
-) -> Result<String, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+pub fn export_chat_markdown(state: State<DbState>, chat_id: String) -> Result<String, AppError> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     export::to_markdown(&conn, &chat_id).map_err(AppError::from)
 }
 
 #[tauri::command]
-pub fn export_chat_json(
-    state: State<DbState>,
-    chat_id: String,
-) -> Result<String, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+pub fn export_chat_json(state: State<DbState>, chat_id: String) -> Result<String, AppError> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     export::to_json(&conn, &chat_id).map_err(AppError::from)
 }
 
@@ -655,7 +777,10 @@ pub fn backup_database(
     db_path_state: State<DbPathState>,
     dest_path: String,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     // Checkpoint WAL so the main file is up-to-date
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     let src = &db_path_state.0;
@@ -670,7 +795,10 @@ pub fn backup_database(
 pub fn get_all_settings(
     state: State<DbState>,
 ) -> Result<std::collections::HashMap<String, String>, AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
     let mut map = std::collections::HashMap::new();
     let mut rows = stmt.query([])?;
@@ -681,12 +809,11 @@ pub fn get_all_settings(
 }
 
 #[tauri::command]
-pub fn set_setting(
-    state: State<DbState>,
-    key: String,
-    value: String,
-) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|_| AppError::Other("db lock poisoned".into()))?;
+pub fn set_setting(state: State<DbState>, key: String, value: String) -> Result<(), AppError> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::Other("db lock poisoned".into()))?;
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -705,38 +832,31 @@ pub async fn web_search(
     websearch::search(&base_url, &query).await
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct OllamaModel {
-    pub name: String,
-    pub size: u64,
-    pub details: Option<OllamaModelDetails>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct OllamaModelDetails {
-    pub family: Option<String>,
+#[tauri::command]
+pub async fn get_models(state: State<'_, DbState>) -> Result<Vec<OllamaModel>, AppError> {
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
+    };
+    router.get_models(&state).await
 }
 
 #[tauri::command]
-pub async fn get_models(ollama_url: String) -> Result<Vec<OllamaModel>, AppError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let res = client
-        .get(format!("{}/api/tags", ollama_url))
-        .send()
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let data: serde_json::Value = res.json().await
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let models = data["models"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|m| serde_json::from_value(m.clone()).ok())
-        .collect();
-    Ok(models)
+pub async fn chat_completion(
+    state: State<'_, DbState>,
+    messages: Vec<ChatMessage>,
+) -> Result<ChatCompletionResponse, AppError> {
+    let router = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::Other("db lock poisoned".into()))?;
+        AiRouter::from_connection(&conn)?
+    };
+    router.chat_completion(&state, &messages).await
 }
 /* pub use crate::voice::{AudioChunk, TranscriptPayload}; */
 

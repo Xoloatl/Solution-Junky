@@ -1,10 +1,9 @@
+use crate::embeddings::{cosine_similarity, from_blob, to_blob};
+use crate::error::Result;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use crate::embeddings::{cosine_similarity, from_blob, to_blob};
-use crate::error::{AppError, Result};
 
 const DEDUP_THRESHOLD: f32 = 0.92;
-const OLLAMA_CHAT_URL: &str = "http://localhost:11434/api/chat";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -25,9 +24,8 @@ pub struct MemoryFact {
 
 /// Load all messages for a chat as a formatted string.
 pub fn load_conversation(conn: &Connection, chat_id: &str) -> Result<String> {
-    let mut stmt = conn.prepare(
-        "SELECT role, content FROM messages WHERE chat_id = ?1 ORDER BY created_at ASC",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT role, content FROM messages WHERE chat_id = ?1 ORDER BY created_at ASC")?;
     let mut rows = stmt.query(params![chat_id])?;
     let mut text = String::new();
     while let Some(row) = rows.next()? {
@@ -135,7 +133,11 @@ pub fn store_facts(
             }
         }
         let id = new_id();
-        let blob: Option<Vec<u8>> = if emb.is_empty() { None } else { Some(to_blob(emb)) };
+        let blob: Option<Vec<u8>> = if emb.is_empty() {
+            None
+        } else {
+            Some(to_blob(emb))
+        };
         conn.execute(
             "INSERT INTO memory_facts
              (id, fact, source_chat_id, confidence, created_at, embedding)
@@ -145,80 +147,6 @@ pub fn store_facts(
         stored += 1;
     }
     Ok(stored)
-}
-
-// ── Async LLM / embedding calls (no DB access — no lock) ─────────────────────
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<OllamaMsg>,
-    stream: bool,
-    format: &'a str,
-}
-
-#[derive(Serialize)]
-struct OllamaMsg {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    message: OllamaRespMsg,
-}
-
-#[derive(Deserialize)]
-struct OllamaRespMsg {
-    content: String,
-}
-
-pub async fn call_extraction(model: &str, conversation: &str) -> Result<Vec<String>> {
-    let prompt = format!(
-        r#"Extract important facts about the user from this conversation for future reference.
-
-Focus on: preferences, goals, skills, projects, background, constraints.
-Be specific and concise. Skip generic statements.
-
-Conversation:
-{conversation}
-
-Return a JSON object: {{"facts": ["fact1", "fact2", ...]}} (max 6 facts).
-ONLY return the JSON."#
-    );
-    let client = reqwest::Client::new();
-    let req = ChatRequest {
-        model,
-        messages: vec![OllamaMsg { role: "user".into(), content: prompt }],
-        stream: false,
-        format: "json",
-    };
-    let resp = client
-        .post(OLLAMA_CHAT_URL)
-        .json(&req)
-        .send()
-        .await
-        .map_err(|e| AppError::Other(format!("extraction request: {e}")))?;
-
-    if !resp.status().is_success() {
-        return Err(AppError::Other(format!("extraction API {}", resp.status())));
-    }
-    let body: ChatResponse = resp.json().await
-        .map_err(|e| AppError::Other(format!("extraction parse: {e}")))?;
-    parse_facts_json(&body.message.content)
-}
-
-pub async fn embed_texts(ollama_url: &str, model: &str, texts: &[String]) -> Vec<Vec<f32>> {
-    use crate::embeddings::embed_batch;
-    let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-    embed_batch(ollama_url, model, &refs)
-        .await
-        .unwrap_or_else(|_| vec![vec![]; texts.len()])
-}
-
-pub async fn embed_query(ollama_url: &str, model: &str, query: &str) -> Option<Vec<f32>> {
-    use crate::embeddings::embed_batch;
-    embed_batch(ollama_url, model, &[query]).await.ok().and_then(|mut v| v.pop())
 }
 
 // ── Ranking (pure, no IO) ─────────────────────────────────────────────────────
@@ -243,26 +171,24 @@ pub fn rank_facts_by_relevance(
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.into_iter().take(top_k).map(|(f, _)| f).collect()
         }
-        None => facts_with_emb.into_iter().take(top_k).map(|(f, _)| f).collect(),
+        None => facts_with_emb
+            .into_iter()
+            .take(top_k)
+            .map(|(f, _)| f)
+            .collect(),
     }
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
-fn parse_facts_json(raw: &str) -> Result<Vec<String>> {
-    #[derive(Deserialize)]
-    struct W { facts: Vec<String> }
-    serde_json::from_str::<W>(raw)
-        .map(|w| w.facts)
-        .or_else(|_| serde_json::from_str::<Vec<String>>(raw))
-        .map_err(|e| AppError::Other(format!("facts JSON: {e}")))
-}
-
 fn new_id() -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use std::time::{SystemTime, UNIX_EPOCH};
-    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let mut h = DefaultHasher::new();
     ns.hash(&mut h);
     format!("mem-{:x}", h.finish())
@@ -270,7 +196,8 @@ fn new_id() -> String {
 
 fn epoch_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "0".into())
 }

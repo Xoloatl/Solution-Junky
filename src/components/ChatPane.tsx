@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, type KeyboardEvent } from "react";
-import { Send, Square, Bot, User, Mic, MicOff, Volume2, VolumeX, Globe, Volume, Network, Settings } from "lucide-react";
+import { Send, Square, Bot, User, Mic, MicOff, Volume2, VolumeX, Globe, Volume, Network, Settings, Plus } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { ModelSelector } from "@/components/ModelSelector";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore, type Message } from "@/store";
 import * as db from "@/lib/db";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { buildContextPrompt, buildMemoryPrompt, buildWebPrompt } from "@/lib/rag";
 import { useSTT, useTTS } from "@/hooks/useVoice";
 import { webSearch } from "@/lib/db";
@@ -96,6 +97,13 @@ export function ChatPane() {
   const [webSearchActive, setWebSearchActive] = useState(settings.web_search_enabled);
 
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<Array<{
+    docId: string;
+    filename: string;
+    filepath?: string;
+    status: "pending" | "ingesting" | "done" | "error";
+    errorMessage?: string;
+  }>>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [autoSpeakEnabled, setAutoSpeakEnabled] = useState(false);
@@ -180,7 +188,8 @@ export function ChatPane() {
   }
 
   async function handleSend() {
-    if (!input.trim() || !activeChatId || isGenerating) return;
+    if (!input.trim() && attachments.length === 0) return;
+    if (!activeChatId || isGenerating) return;
 
     // Stop any currently playing speech and clear the queue when starting a new message
     if (ttsState === "speaking") {
@@ -208,7 +217,7 @@ export function ChatPane() {
       buildContextPrompt(retrievedChunks) +
       buildWebPrompt(webResults);
 
-    // Persist user message
+    // Persist user message (content stored as plain text)
     const userMsg = await db.saveMessage({
       id: crypto.randomUUID(),
       chat_id: activeChatId,
@@ -286,53 +295,35 @@ export function ChatPane() {
       for (const m of chatMessages) {
         history.push({ role: m.role, content: m.content });
       }
-      history.push({ role: "user", content: userContent });
+      // If there are attachments, include them as a JSON payload in the user message
+      if (attachments.length > 0) {
+        const attachMeta = attachments.map((a) => ({ filename: a.filename, docId: a.docId }));
+        history.push({ role: "user", content: JSON.stringify({ text: userContent, attachments: attachMeta }) });
+      } else {
+        history.push({ role: "user", content: userContent });
+      }
 
-      // Log history for verification before sending to Ollama
+      // Log history for verification before sending to the backend router
       // eslint-disable-next-line no-console
       console.log(history);
 
-      const res = await fetch(`${settings.ollama_url}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: settings.chat_model, messages: history, stream: true }),
-        signal: abortRef.current.signal,
-      });
+      const response = await db.chatCompletion(history);
+      finalContent = response.content;
+      updateStreamingMessage(activeChatId, assistantId, response.content);
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const lines = decoder.decode(value).split("\n").filter(Boolean);
-        for (const line of lines) {
-          try {
-            const chunk = JSON.parse(line) as { message?: { content?: string } };
-            if (chunk.message?.content) {
-              finalContent += chunk.message.content;
-              updateStreamingMessage(activeChatId, assistantId, chunk.message.content);
-
-              // Streaming TTS: queue complete sentences and play them sequentially
-              if (autoSpeakEnabled && ttsSupported) {
-                sentenceBufferRef.current += chunk.message.content;
-
-                let sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
-                while (sentenceMatch) {
-                  const endIndex = sentenceMatch.index! + sentenceMatch[0].length;
-                  const sentenceToSpeak = sentenceBufferRef.current.substring(0, endIndex).trim();
-                  sentenceBufferRef.current = sentenceBufferRef.current.substring(endIndex).trim();
-                  if (sentenceToSpeak) {
-                    speechQueueRef.current.push(sentenceToSpeak);
-                  }
-                  sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
-                }
-                processQueue();
-              }
-            }
-          } catch {
-            // malformed chunk
+      if (autoSpeakEnabled && ttsSupported) {
+        sentenceBufferRef.current = response.content;
+        let sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
+        while (sentenceMatch) {
+          const endIndex = sentenceMatch.index! + sentenceMatch[0].length;
+          const sentenceToSpeak = sentenceBufferRef.current.substring(0, endIndex).trim();
+          sentenceBufferRef.current = sentenceBufferRef.current.substring(endIndex).trim();
+          if (sentenceToSpeak) {
+            speechQueueRef.current.push(sentenceToSpeak);
           }
+          sentenceMatch = sentenceBufferRef.current.match(/[.!?]\s/);
         }
+        processQueue();
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -379,6 +370,8 @@ export function ChatPane() {
           })
           .catch(() => {});
       }
+      // Clear attachments after send
+      setAttachments([]);
     }
   }
 
@@ -398,10 +391,10 @@ export function ChatPane() {
   return (
     <div className="flex-1 flex flex-col min-w-0 h-full">
       <div className="flex items-center justify-between pl-4 pr-4 py-2.5 border-b border-border shrink-0">
-        <span className="text-sm font-medium text-foreground truncate">
+        <span className="min-w-0 overflow-hidden text-sm font-medium text-foreground truncate">
           {activeChat?.title || "New Chat"}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {ttsSupported && (
             <Button
               size="icon"
@@ -473,6 +466,125 @@ export function ChatPane() {
       <div className="shrink-0 border-t border-border px-4 py-3">
         <div className="flex items-end gap-2 bg-card rounded-xl border border-border px-3 py-2">
           <ModelSelector />
+          {/* Attachment + button and dropdown */}
+          <div className="relative">
+            <Button
+              size="icon"
+              variant="ghost"
+              title="Add attachment"
+              className="h-8 w-8"
+              onClick={() => {
+                const menu = document.getElementById("attachment-menu");
+                if (menu) menu.classList.toggle("hidden");
+              }}
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+            <div id="attachment-menu" className="hidden absolute bottom-10 right-0 z-50 w-44 bg-card border border-border rounded-md shadow-md py-1">
+              <button className="w-full text-left px-3 py-2 hover:bg-muted" onClick={async () => {
+                const inTauri = Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__);
+                if (!inTauri) {
+                  const inputEl = document.createElement("input");
+                  inputEl.type = "file";
+                  inputEl.accept = "image/*";
+                  inputEl.multiple = true;
+                  inputEl.onchange = async (ev) => {
+                    const files = (ev.target as HTMLInputElement).files;
+                    if (!files) return;
+                    for (const f of Array.from(files)) {
+                      const docId = crypto.randomUUID();
+                      setAttachments((s) => [...s, { docId, filename: f.name, status: "pending" }]);
+                    }
+                  };
+                  inputEl.click();
+                  return;
+                }
+                const selected = await open({ multiple: true, filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"] }] });
+                if (!selected) return;
+                const paths = Array.isArray(selected) ? selected : [selected];
+                for (const p of paths) {
+                  const filepath = String(p);
+                  const filename = filepath.split(/[\\/]/).pop() ?? filepath;
+                  const docId = crypto.randomUUID();
+                  setAttachments((s) => [...s, { docId, filename, filepath, status: "ingesting" }]);
+                  try {
+                    await db.ingestFile(docId, filepath, filename);
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "done" } : a));
+                  } catch (err) {
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "error", errorMessage: String(err) } : a));
+                  }
+                }
+              }}>Upload Image</button>
+              <button className="w-full text-left px-3 py-2 hover:bg-muted" onClick={async () => {
+                const inTauri = Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__);
+                if (!inTauri) {
+                  const inputEl = document.createElement("input");
+                  inputEl.type = "file";
+                  inputEl.accept = ".pdf";
+                  inputEl.multiple = true;
+                  inputEl.onchange = async (ev) => {
+                    const files = (ev.target as HTMLInputElement).files;
+                    if (!files) return;
+                    for (const f of Array.from(files)) {
+                      const docId = crypto.randomUUID();
+                      setAttachments((s) => [...s, { docId, filename: f.name, status: "pending" }]);
+                    }
+                  };
+                  inputEl.click();
+                  return;
+                }
+                const selected = await open({ multiple: true, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+                if (!selected) return;
+                const paths = Array.isArray(selected) ? selected : [selected];
+                for (const p of paths) {
+                  const filepath = String(p);
+                  const filename = filepath.split(/[\\/]/).pop() ?? filepath;
+                  const docId = crypto.randomUUID();
+                  setAttachments((s) => [...s, { docId, filename, filepath, status: "ingesting" }]);
+                  try {
+                    await db.ingestFile(docId, filepath, filename);
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "done" } : a));
+                  } catch (err) {
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "error", errorMessage: String(err) } : a));
+                  }
+                }
+              }}>Upload PDF</button>
+              <button className="w-full text-left px-3 py-2 hover:bg-muted" onClick={async () => {
+                const inTauri = Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__);
+                if (!inTauri) {
+                  const inputEl = document.createElement("input");
+                  inputEl.type = "file";
+                  inputEl.multiple = true;
+                  inputEl.onchange = async (ev) => {
+                    const files = (ev.target as HTMLInputElement).files;
+                    if (!files) return;
+                    for (const f of Array.from(files)) {
+                      const docId = crypto.randomUUID();
+                      setAttachments((s) => [...s, { docId, filename: f.name, status: "pending" }]);
+                    }
+                  };
+                  inputEl.click();
+                  return;
+                }
+                const selected = await open({ multiple: true });
+                if (!selected) return;
+                const paths = Array.isArray(selected) ? selected : [selected];
+                for (const p of paths) {
+                  const filepath = String(p);
+                  const filename = filepath.split(/[\\/]/).pop() ?? filepath;
+                  const docId = crypto.randomUUID();
+                  setAttachments((s) => [...s, { docId, filename, filepath, status: "ingesting" }]);
+                  try {
+                    await db.ingestFile(docId, filepath, filename);
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "done" } : a));
+                  } catch (err) {
+                    setAttachments((s) => s.map((a) => a.docId === docId ? { ...a, status: "error", errorMessage: String(err) } : a));
+                  }
+                }
+              }}>Upload File</button>
+              <button className="w-full text-left px-3 py-2 hover:bg-muted" onClick={() => { alert("Take Screenshot not implemented yet"); }}>Take Screenshot</button>
+            </div>
+          </div>
           {sttSupported && (
             <Button
               size="icon"
@@ -503,6 +615,21 @@ export function ChatPane() {
           >
             <Globe className="w-4 h-4" />
           </Button>
+          {/* Attachment chips */}
+          <div className="flex items-center gap-2 ml-2 mr-2">
+            {attachments.map((a) => (
+              <div key={a.docId} className="inline-flex items-center gap-2 bg-muted px-2 py-1 rounded-full text-xs border">
+                <span className="max-w-[160px] truncate">{a.filename}</span>
+                <button
+                  onClick={() => setAttachments((s) => s.filter((x) => x.docId !== a.docId))}
+                  className="w-5 h-5 flex items-center justify-center"
+                  title="Remove attachment"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
           <textarea
             ref={textareaRef}
             value={input}
@@ -529,7 +656,7 @@ export function ChatPane() {
             <Button
               size="icon"
               onClick={handleSend}
-              disabled={!input.trim()}
+              disabled={!input.trim() && attachments.length === 0}
               className="h-8 w-8 shrink-0"
             >
               <Send className="w-4 h-4" />

@@ -1,9 +1,11 @@
+pub mod ai;
 pub mod categorization;
 pub mod commands;
 pub mod db;
 pub mod embeddings;
 pub mod error;
 pub mod export;
+pub mod image;
 pub mod ingest;
 pub mod memory;
 pub mod ocr;
@@ -12,9 +14,9 @@ pub mod retrieval;
 pub mod search;
 pub mod websearch;
 
-use tauri::Manager;
-use db::{DbState, DbPathState};
 use commands::*;
+use db::{DbPathState, DbState};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -31,7 +33,7 @@ pub fn run() {
             let (conn, db_path) = db::open(&app_dir)?;
             app.manage(DbState(std::sync::Mutex::new(conn)));
             app.manage(DbPathState(db_path));
-/*            let voice_dir = app_dir.join("voice");
+            /*            let voice_dir = app_dir.join("voice");
             std::fs::create_dir_all(&voice_dir)?;
             app.manage(VoiceState::default_for_app_data(voice_dir));*/
             Ok(())
@@ -48,6 +50,7 @@ pub fn run() {
             save_message,
             update_message_content,
             list_documents,
+            ingest_file,
             ingest_pdf,
             retrieve_chunks,
             extract_memory,
@@ -70,6 +73,7 @@ pub fn run() {
             check_tesseract,
             web_search,
             get_models,
+            chat_completion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

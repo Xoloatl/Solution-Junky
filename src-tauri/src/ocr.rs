@@ -1,6 +1,6 @@
-use std::process::Command;
 use crate::error::{AppError, Result};
 use crate::pdf::PageText;
+use std::process::Command;
 
 /// Returns true if `tesseract` is found on PATH.
 pub fn is_available() -> bool {
@@ -15,7 +15,7 @@ pub fn is_available() -> bool {
 ///
 /// Requires the UB-Mannheim Windows build (or any build with PDF/pdfrenderer
 /// support). Tesseract outputs pages separated by form-feed characters (\x0C).
-pub fn ocr_pdf(filepath: &str, lang: &str) -> Result<Vec<PageText>> {
+fn run_tesseract(filepath: &str, lang: &str) -> Result<String> {
     let output = Command::new("tesseract")
         .args([filepath, "stdout", "-l", lang])
         .output()
@@ -26,7 +26,10 @@ pub fn ocr_pdf(filepath: &str, lang: &str) -> Result<Vec<PageText>> {
         return Err(AppError::Other(format!("tesseract: {stderr}")));
     }
 
-    let raw = String::from_utf8_lossy(&output.stdout);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn parse_tesseract_output(raw: String) -> Result<Vec<PageText>> {
     let pages: Vec<PageText> = raw
         .split('\x0C')
         .enumerate()
@@ -43,10 +46,22 @@ pub fn ocr_pdf(filepath: &str, lang: &str) -> Result<Vec<PageText>> {
         .collect();
 
     if pages.is_empty() {
-        // Tesseract succeeded but produced nothing — return single "page" with raw output
         let text = raw.trim().to_string();
-        Ok(vec![PageText { page_number: 1, text }])
+        Ok(vec![PageText {
+            page_number: 1,
+            text,
+        }])
     } else {
         Ok(pages)
     }
+}
+
+pub fn ocr_pdf(filepath: &str, lang: &str) -> Result<Vec<PageText>> {
+    let raw = run_tesseract(filepath, lang)?;
+    parse_tesseract_output(raw)
+}
+
+pub fn ocr_image(filepath: &str, lang: &str) -> Result<Vec<PageText>> {
+    let raw = run_tesseract(filepath, lang)?;
+    parse_tesseract_output(raw)
 }

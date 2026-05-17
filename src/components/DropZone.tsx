@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { Upload } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import type { IngestJob } from "./IngestToast";
+import { ingestFile } from "@/lib/db";
 
 const inTauri = Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__);
 
@@ -19,10 +19,13 @@ interface Props {
 export function DropZone({ onJobUpdate }: Props) {
   const [isDraggingOver, setIsDraggingOver] = useState(false);
 
-  const ingestFile = useCallback(
+  const startIngest = useCallback(
     async (filepath: string) => {
       const filename = filepath.split(/[\\/]/).pop() ?? filepath;
-      if (!filename.toLowerCase().endsWith(".pdf")) return;
+      const lower = filename.toLowerCase();
+      if (!lower.endsWith(".pdf") && !lower.endsWith(".png") && !lower.endsWith(".jpg") && !lower.endsWith(".jpeg") && !lower.endsWith(".webp") && !lower.endsWith(".bmp") && !lower.endsWith(".tiff") && !lower.endsWith(".tif")) {
+        return;
+      }
 
       const docId = crypto.randomUUID();
 
@@ -36,13 +39,7 @@ export function DropZone({ onJobUpdate }: Props) {
       });
 
       try {
-        const result = await invoke<{
-          doc_id: string;
-          filename: string;
-          chunk_count: number;
-          page_count: number;
-          ocr_applied: boolean;
-        }>("ingest_pdf", { docId, filepath, filename });
+        const result = await ingestFile(docId, filepath, filename);
 
         onJobUpdate({
           docId,
@@ -94,7 +91,7 @@ export function DropZone({ onJobUpdate }: Props) {
       setIsDraggingOver(false);
       const paths = event.payload.paths ?? [];
       for (const p of paths) {
-        ingestFile(p);
+        startIngest(p);
       }
     });
 
@@ -107,18 +104,23 @@ export function DropZone({ onJobUpdate }: Props) {
       unlistenEnter.then((f) => f());
       unlistenLeave.then((f) => f());
     };
-  }, [ingestFile, onJobUpdate]);
+  }, [startIngest, onJobUpdate]);
 
   async function handlePickFile() {
     if (!inTauri) return;
     const selected = await open({
       multiple: true,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
+      filters: [
+        {
+          name: "Documents and Images",
+          extensions: ["pdf", "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif"],
+        },
+      ],
     });
     if (!selected) return;
     const paths = Array.isArray(selected) ? selected : [selected];
     for (const p of paths) {
-      ingestFile(p);
+      startIngest(p);
     }
   }
 
@@ -128,7 +130,7 @@ export function DropZone({ onJobUpdate }: Props) {
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary pointer-events-none">
         <div className="flex flex-col items-center gap-3 text-primary">
           <Upload className="w-12 h-12" />
-          <p className="text-lg font-semibold">Drop PDF to ingest</p>
+          <p className="text-lg font-semibold">Drop PDF or image to ingest</p>
         </div>
       </div>
     );

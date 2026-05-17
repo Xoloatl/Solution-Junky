@@ -19,7 +19,42 @@ interface SaveMessageArgs {
   model_used: string;
   created_at: string;
 }
+export interface ChatMessage {
+  role: string;
+  content: string;
+}
 
+export interface AiTokens {
+  prompt?: number;
+  completion?: number;
+  total?: number;
+}
+
+export interface ChatCompletionResponse {
+  content: string;
+  model_used: string;
+  tokens?: AiTokens;
+}
+
+export interface OllamaModel {
+  name: string;
+  size: number;
+  details?: { family?: string };
+}
+
+export async function getModels(): Promise<OllamaModel[]> {
+  if (!inTauri) return [];
+  return invoke<OllamaModel[]>("get_models");
+}
+
+export async function chatCompletion(
+  messages: ChatMessage[],
+): Promise<ChatCompletionResponse> {
+  if (!inTauri) {
+    return { content: "", model_used: "", tokens: undefined };
+  }
+  return invoke<ChatCompletionResponse>("chat_completion", { messages });
+}
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
 export async function listChats(): Promise<Chat[]> {
@@ -113,12 +148,20 @@ export async function listDocuments(): Promise<DbDocument[]> {
   return invoke<DbDocument[]>("list_documents");
 }
 
+export async function ingestFile(
+  docId: string,
+  filepath: string,
+  filename: string
+): Promise<IngestComplete> {
+  return invoke<IngestComplete>("ingest_file", { docId, filepath, filename });
+}
+
 export async function ingestPdf(
   docId: string,
   filepath: string,
   filename: string
 ): Promise<IngestComplete> {
-  return invoke<IngestComplete>("ingest_pdf", { docId, filepath, filename });
+  return ingestFile(docId, filepath, filename);
 }
 
 // ── Memory ────────────────────────────────────────────────────────────────────

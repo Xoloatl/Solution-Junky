@@ -1,10 +1,10 @@
+use crate::error::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use crate::error::Result;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct SearchResult {
-    pub kind: String,       // "message" | "chunk"
+    pub kind: String, // "message" | "chunk"
     pub id: String,
     pub chat_id: Option<String>,
     pub chat_title: Option<String>,
@@ -85,7 +85,11 @@ pub fn global_search(conn: &Connection, raw_query: &str) -> Result<Vec<SearchRes
     }
 
     // Sort combined results by score descending, cap at MAX_RESULTS
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results.truncate(MAX_RESULTS);
     Ok(results)
 }
